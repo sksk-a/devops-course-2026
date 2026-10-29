@@ -3,6 +3,7 @@ set -euo pipefail
 trap 'echo "Deployment failed" >&2; exit 1' ERR
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)
+REPO_ROOT=$(cd -- "$REPO_ROOT" && pwd)
 TARGET=${DEPLOY_TARGET:-devops}
 URL=${DEPLOY_URL:-https://devops.local/}
 CA_CERT=${CA_CERT:-$REPO_ROOT/certs/devops.crt}
