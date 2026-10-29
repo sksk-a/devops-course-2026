@@ -48,5 +48,15 @@ if [[ -d /var/www/devops-site ]] && \
     SAFE_PERMISSIONS=yes
 fi
 check 'Site not world-writable and TLS key mode 600' yes "$SAFE_PERMISSIONS"
+echo '[5] Containerization'
+check 'Docker active' active "$(systemctl is-active docker)"
+check 'Database container healthy' healthy "$(docker inspect -f '{{.State.Health.Status}}' app-db-1 2>/dev/null)"
+PRIVATE_PORTS=no
+if SOCKETS=$(ss -H -ltn); then
+    PRIVATE_PORTS=$(awk '$4 ~ /:(5000|5432)$/ && $4 !~ /^127[.]0[.]0[.]1:/ {bad=1} END {print bad ? "no" : "yes"}' <<< "$SOCKETS")
+fi
+check 'App and DB ports bound only to 127.0.0.1' yes "$PRIVATE_PORTS"
+APP_DIR=${APP_DIR:-/home/devops/app}
+check 'Application env file mode 600' 600 "$(stat -c '%a' "$APP_DIR/.env" 2>/dev/null)"
 printf 'Passed: %s, failed: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
