@@ -156,7 +156,72 @@ sudo ufw status verbose
 Снимок фиксирует также параметры ВМ. После отката на `01-clean-install` проверить, что правило NAT снова указывает на гостевой порт 22.
 Конфигурация Windows, ключи клиента и запись hosts откатом ВМ не восстанавливаются.
 
-## 8. Восстановление и проверка
+## 8. Веб-сервер
+
+Пакеты: `sudo apt install nginx rsync`. Сайт: `https://devops.local/`.
+Конфигурация: `/etc/nginx/sites-available/devops-site`, символическая ссылка
+в `sites-enabled`; ссылка `sites-enabled/default` удалена. Корень сайта:
+`/var/www/devops-site`, владелец `devops:devops`, каталоги 755, файлы 644.
+Рабочие процессы `www-data` читают файлы, но не изменяют их.
+
+Самоподписанный сертификат создан на 365 дней:
+
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key -out /etc/ssl/certs/devops.crt \
+  -subj '/CN=devops.local' -addext 'subjectAltName=DNS:devops.local'
+sudo chmod 600 /etc/ssl/private/devops.key
+sudo chmod 644 /etc/ssl/certs/devops.crt
+```
+
+Владелец обоих файлов root. Закрытый ключ читает главный процесс Nginx.
+Срок сертификата: 29.10.2026–29.10.2027. Публичная копия сертификата
+в `certs/devops.crt` получена через SCP с проверенным SSH-ключом сервера.
+Закрытый ключ хранится только на ВМ.
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name devops.local;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name devops.local;
+    root /var/www/devops-site;
+    index index.html;
+    ssl_certificate /etc/ssl/certs/devops.crt;
+    ssl_certificate_key /etc/ssl/private/devops.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    location / { try_files $uri $uri/ =404; }
+    error_page 404 /404.html;
+    access_log /var/log/nginx/devops-site.access.log;
+    error_log /var/log/nginx/devops-site.error.log;
+}
+```
+
+После изменений: `sudo nginx -t && sudo systemctl reload nginx`.
+Снимок `04-nginx-https` сохраняет HTTPS перед доставкой сайта.
+
+На клиенте нужны Bash, Git, rsync, OpenSSH и curl. Для Windows использованы
+Git Bash и rsync из MSYS2, без WSL. Алиас `devops` использует ключ,
+порт 2222 и проверенный known_hosts. Запуск из любого каталога репозитория:
+
+```bash
+scripts/deploy.sh --dry-run
+scripts/deploy.sh
+curl --cacert certs/devops.crt https://devops.local/
+```
+
+Скрипт требует чистое рабочее дерево и `site/index.html`, использует одно
+SSH-соединение rsync, зеркалирует `site/` через `--delete --chmod=D755,F644`.
+После доставки проверяет HTTPS без `-k`; при ошибках возвращает 1.
+Перед доставкой изменённые файлы нужно закоммитить. `--dry-run` ничего
+не меняет на сервере и не выполняет HTTP-проверку.
+
+## 9. Восстановление и проверка
 
 После отката на `01-clean-install` войти через консоль или с хоста:
 
@@ -196,7 +261,8 @@ sudo -v
 echo $?
 ```
 
-Ожидается 6 успешных проверок, 0 ошибок, код 0.
+До установки веб-сервера в версии ПР5 ожидается 6 успешных проверок.
+После настройки веб-сервера текущий аудит выполняет 10 проверок: код 0 при отсутствии ошибок.
 Для отрицательного теста временно установить MaxAuthTries 10 в drop-in-файле и снова запустить аудит: код 1.
 После теста вернуть 3 и проверить `sudo sshd -t`, затем выполнить перезапуск SSH и аудит с кодом 0.
 Для проверки самого аудита перезапуск службы при значении 10 не нужен: `sshd -T` читает конфигурацию с диска.
