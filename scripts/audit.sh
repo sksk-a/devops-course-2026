@@ -33,5 +33,20 @@ check 'Default incoming policy is deny' deny "$(sed -n 's/^Default: \([^ ]*\) (i
 
 echo '[3] User accounts'
 awk -F: '$3>=1000 && $3<65534 {printf "    %s (uid=%s)\n",$1,$3}' /etc/passwd
+echo '[4] Web server'
+check 'Nginx active' active "$(systemctl is-active nginx)"
+NGINX_TEST=no
+if sudo nginx -t >/dev/null 2>&1; then NGINX_TEST=yes; fi
+check 'Nginx configuration valid' yes "$NGINX_TEST"
+CERT_VALID=no
+if openssl x509 -checkend 2592000 -noout -in /etc/ssl/certs/devops.crt >/dev/null 2>&1; then CERT_VALID=yes; fi
+check 'Certificate valid for at least 30 days' yes "$CERT_VALID"
+SAFE_PERMISSIONS=no
+if [[ -d /var/www/devops-site ]] && \
+   [[ -z $(sudo find /var/www/devops-site -perm -o+w -print) ]] && \
+   [[ $(sudo stat -c %a /etc/ssl/private/devops.key) == 600 ]]; then
+    SAFE_PERMISSIONS=yes
+fi
+check 'Site not world-writable and TLS key mode 600' yes "$SAFE_PERMISSIONS"
 printf 'Passed: %s, failed: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

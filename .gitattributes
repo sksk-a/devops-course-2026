@@ -1,2 +1,4 @@
 scripts/*.sh text eol=lf
 docs/*.md text eol=lf
+site/*.html text eol=lf
+certs/*.crt text eol=lf
