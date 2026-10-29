@@ -184,6 +184,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name devops.local;
+    access_log /var/log/nginx/devops-site.access.log;
     return 301 https://$host$request_uri;
 }
 server {
@@ -206,7 +207,9 @@ server {
 Снимок `04-nginx-https` сохраняет HTTPS перед доставкой сайта.
 
 На клиенте нужны Bash, Git, rsync, OpenSSH и curl. Для Windows использованы
-Git Bash и rsync из MSYS2, без WSL. Алиас `devops` использует ключ,
+Bash, rsync и OpenSSH из MSYS2, Git и curl из Git for Windows, без WSL.
+Для переносимого комплекта MSYS2 заданы HOME и `db_home: windows`
+в `etc/nsswitch.conf`. Алиас `devops` использует ключ,
 порт 2222 и проверенный known_hosts. Запуск из любого каталога репозитория:
 
 ```bash
@@ -220,6 +223,23 @@ SSH-соединение rsync, зеркалирует `site/` через `--del
 После доставки проверяет HTTPS без `-k`; при ошибках возвращает 1.
 Перед доставкой изменённые файлы нужно закоммитить. `--dry-run` ничего
 не меняет на сервере и не выполняет HTTP-проверку.
+
+Проверены пять сценариев: dry-run (0, хеши файлов не изменились),
+закоммиченная версия (0), грязное дерево (1), остановленный Nginx (1),
+переименованный и закоммиченный index.html в отдельной тестовой копии (1).
+После тестов Nginx запущен, штатный деплой восстановил сайт.
+Права каталога 755/750/744/711 дали HTTP 200/403/403/200;
+файл 600 дал 403. Небезопасная доставка 666 без `--chmod` воспроизведена
+из временного Linux-каталога на ВМ: Windows не изменила исходный режим 644.
+Запись от www-data удалась только при 666; после штатного деплоя запрещена.
+Аудит обнаружил world-writable файл и искусственно увеличенный срок
+проверки сертификата (оба раза код 1); итоговый аудит: 10/10, код 0.
+
+Для подготовки к ПР7 установлен Docker Engine Community из официального
+APT-репозитория https://docs.docker.com/engine/install/ubuntu/.
+Установлены docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin,
+docker-compose-plugin. Пользователь devops добавлен в docker;
+`docker run --rm hello-world` выполнен без sudo. Контейнерные порты не публиковались.
 
 ## 9. Восстановление и проверка
 
