@@ -241,7 +241,78 @@ APT-репозитория https://docs.docker.com/engine/install/ubuntu/.
 docker-compose-plugin. Пользователь devops добавлен в docker;
 `docker run --rm hello-world` выполнен без sudo. Контейнерные порты не публиковались.
 
-## 9. Восстановление и проверка
+## 9. Контейнеризация
+
+Docker Engine Community 29.9.2 и Compose v5.6.1 установлены из официального
+APT-репозитория Docker; пакет docker.io не используется. В группе docker
+состоит devops (также имеет sudo); членство фактически предоставляет root.
+
+Если Docker ещё не установлен, на Ubuntu 24.04 выполнить:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable' | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker devops
+```
+
+Начать новую SSH-сессию. Проект хранится в `/home/devops/app`.
+Исходники из `app/` доставляются с хоста (сначала добавить `--dry-run`):
+
+```bash
+rsync -avz --delete --exclude=.env app/ devops:app/
+```
+
+На сервере, от devops, сформировать секрет только при первом развёртывании:
+
+```bash
+cd ~/app
+umask 077
+{ printf 'POSTGRES_DB=app\nPOSTGRES_USER=app\nPOSTGRES_PASSWORD='; openssl rand -hex 16; printf 'DB_HOST=db\n'; } > .env
+chmod 600 .env
+docker compose up -d --build --wait
+```
+
+`/home/devops/app/.env`: devops:devops, 600. При повторном деплое не
+перезаписывать .env: смена пароля не меняет пароль уже созданной БД.
+Файл отсутствует в Git и исключён из Docker-контекста и rsync; в репозитории
+хранится только .env.example с заглушкой. Не выводить секрет в отчёт.
+
+Dockerfile и docker-compose.yml находятся в `app/` репозитория.
+Образ devops-app:1.0 основан на python:3.12-slim; Gunicorn работает
+от app (UID 999), код принадлежит root и имеет 644. PostgreSQL:
+postgres:16-alpine, контейнер app-db-1, healthcheck pg_isready.
+Приложение app-app-1 ждёт service_healthy. Сеть app_backend, DNS-имя БД db.
+Именованный том app_db_data подключён к /var/lib/postgresql/data.
+Публикация приложения: только 127.0.0.1:5000:5000; 5432 не опубликован.
+Обычный compose down сохраняет том. Флаг -v удаляет данные; для штатной
+остановки и восстановления не применять. Снимок: 05-docker-compose.
+
+В HTTPS-блок /etc/nginx/sites-available/devops-site добавлено:
+
+```nginx
+location /app/ {
+    proxy_pass http://127.0.0.1:5000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Статический root и location / сохранены. Применение:
+`sudo nginx -t && sudo systemctl reload nginx`.
+Проверки: `curl --cacert certs/devops.crt https://devops.local/app/health`
+с хоста, `docker compose ps`, `docker compose exec -T app id`,
+`ss -tln`, `scripts/audit.sh` (14 проверок, код 0).
+Отказ приложения даёт 502 и connect() failed в журнале Nginx.
+Тест публикации на всех адресах даёт ошибку аудита; штатный адрес восстановлен.
+
+## 10. Восстановление и проверка
 
 После отката на `01-clean-install` войти через консоль или с хоста:
 
@@ -282,7 +353,8 @@ echo $?
 ```
 
 До установки веб-сервера в версии ПР5 ожидается 6 успешных проверок.
-После настройки веб-сервера текущий аудит выполняет 10 проверок: код 0 при отсутствии ошибок.
+После настройки веб-сервера версия ПР6 выполняет 10 проверок.
+После контейнеризации текущий аудит выполняет 14 проверок: код 0 при отсутствии ошибок.
 Для отрицательного теста временно установить MaxAuthTries 10 в drop-in-файле и снова запустить аудит: код 1.
 После теста вернуть 3 и проверить `sudo sshd -t`, затем выполнить перезапуск SSH и аудит с кодом 0.
 Для проверки самого аудита перезапуск службы при значении 10 не нужен: `sshd -T` читает конфигурацию с диска.
